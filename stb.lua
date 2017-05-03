@@ -3,6 +3,7 @@ package.path = '/workspace/zdc/lua/zsvc/?.lua;/workspace/zdc/lua/zai/?.lua;/work
 package.cpath = '/workspace/zdc/lib/mac64/?.so;'..package.cpath
 
 local rs232 = require("luars232")
+local tools = require('tool')
 local bit = require("bit")
 local band,rshift,bxor = bit.band,bit.rshift,bit.bxor
 -- Linux
@@ -28,7 +29,7 @@ end
 -- set port settings
 assert(p:set_baud_rate(rs232.RS232_BAUD_115200) == rs232.RS232_ERR_NOERROR)
 assert(p:set_data_bits(rs232.RS232_DATA_8) == rs232.RS232_ERR_NOERROR)
-assert(p:set_parity(rs232.RS232_PARITY_EVEN) == rs232.RS232_ERR_NOERROR)
+assert(p:set_parity(rs232.RS232_PARITY_NONE) == rs232.RS232_ERR_NOERROR)
 assert(p:set_stop_bits(rs232.RS232_STOP_1) == rs232.RS232_ERR_NOERROR)
 assert(p:set_flow_control(rs232.RS232_FLOW_OFF)  == rs232.RS232_ERR_NOERROR)
 
@@ -40,6 +41,7 @@ local stb=
 	support_cmd={},
 	blksize=128,--for stm8, stm32 is 256
  	address=0xa0,
+ 	timeout=100
 	-- address=0x008000
 }
 
@@ -50,7 +52,8 @@ local cmd=
 	GET=string.char(0x00)..string.char(0xff),
 	READ=string.char(0x11)..string.char(0xee),
 	ERASE=string.char(0x43)..string.char(0xbc),
-	WRITE=string.char(0x31)..string.char(0xce)
+	WRITE=string.char(0x31)..string.char(0xce),
+	GO=string.char(0x21)..string.char(0xde)
 }
 
 local rsp=
@@ -70,9 +73,9 @@ local function tohex(s)
 	end
 end
 
-local function tostr(d)
+local function tostr(tbl)
 	local s=''
-	for _,v in ipairs(d) do
+	for _,v in ipairs(tbl) do
 		s=s..string.char(v)
 	end
 	return s
@@ -96,15 +99,6 @@ end
 
 local function sleep(t)
 	os.execute('sleep '..t)
-end
-
-local function wait_reply()
-	local err, msg=p:read(1,timeout)
-	if err ~= rs232.RS232_ERR_NOERROR then
-		return false, err
-	end
-	p:write(msg)
-	return true, msg
 end
 
 local timeout=100
@@ -162,11 +156,11 @@ local function get()
 	return true
 end
 
-local function write(address,data)
-	p:write(cmd.WRITE)
+local function read(address,n)
+	p:write(cmd.READ)
 	local err, ack=p:read(1,timeout)
 	if err ~= rs232.RS232_ERR_NOERROR then
-		return false, err
+		return false, err, '1'
 	end
 	p:write(ack)
 	if ack ~= rsp.ack then
@@ -179,25 +173,85 @@ local function write(address,data)
 	d[4]=band(address,0xff)
 	d[5]=checksum(d)
 	p:write(tostr(d))
-	print(tohex(tostr(d)))
 	local err, ack=p:read(1,timeout)
 	if err ~= rs232.RS232_ERR_NOERROR then
-		return false, err
+		return false, err, '2'
 	end
 	p:write(ack)
+	if ack ~= rsp.ack then
+		return false, ack, 'data rejected'
+	end
+	d={}
+	if n and n<=0xff then
+		d[1]=n
+		d[2]=checksum(n)
+	else
+		d[1]=0x01
+		d[2]=0xfe
+	end
+	p:write(tostr(d))
+	local err, ack=p:read(1,timeout)
+	if err ~= rs232.RS232_ERR_NOERROR then
+		return false, err, '3'
+	end
+	p:write(ack)
+	if ack ~= rsp.ack then
+		return false, ack, 'data rejected'
+	end
+	local err, v=p:read(1,timeout)
+	if err ~= rs232.RS232_ERR_NOERROR then
+		return false, err, '4'
+	end
+	p:write(v)
+	local err, v=p:read(1,timeout)
+	if err ~= rs232.RS232_ERR_NOERROR then
+		return false, err, '5'
+	end
+	p:write(v)
+	return true, v
+end
+
+local function comm(s)
+	p:write(s)
+	-- print(tohex(s))
+end
+
+local function write(address,data,ex)
+	local timeout=ex or stb.timeout
+	comm(cmd.WRITE)
+	local err, ack=p:read(1,timeout)
+	if err ~= rs232.RS232_ERR_NOERROR then
+		return false, err, '1'
+	end
+	p:write(ack)
+	if ack ~= rsp.ack then
+		return false, ack, 'write rejected'
+	end
+	local d={}
+	d[1]=band(rshift(address,24),0xff)
+	d[2]=band(rshift(address,16),0xff)
+	d[3]=band(rshift(address,8),0xff)
+	d[4]=band(address,0xff)
+	d[5]=checksum(d)
+	comm(tostr(d))
+	local err, ack=p:read(1,timeout)
+	if err ~= rs232.RS232_ERR_NOERROR then
+		return false, err, '2'
+	end
+	comm(ack)
 	if ack ~= rsp.ack then
 		return false, ack, 'address rejected'
 	end
-	p:write(string.char(#data-1))
-	p:write(data)
-	p:write(string.char(checksum(data,#data-1)))
+	comm(string.char(#data-1))
+	comm(data)
+	comm(string.char(checksum(data,#data-1)))
 	local err, ack=p:read(1,timeout)
 	if err ~= rs232.RS232_ERR_NOERROR then
-		return false, err
+		return false, err, '3'
 	end
-	p:write(ack)
+	comm(ack)
 	if ack ~= rsp.ack then
-		return false, ack,'data rejected'
+		return false, ack, 'data rejected'
 	end
 	return true
 end
@@ -206,7 +260,7 @@ local function erase(sectorCodes)
 	p:write(cmd.ERASE)
 	local err, ack=p:read(1,timeout)
 	if err ~= rs232.RS232_ERR_NOERROR then
-		return false, err
+		return false, err, '1'
 	end
 	p:write(ack)
 	if ack ~= rsp.ack then
@@ -225,9 +279,10 @@ local function erase(sectorCodes)
 	end
 	p:write(tostr(d))
 	print(tohex(tostr(d)))
-	local err, ack=p:read(1,timeout)
+	sleep(1)
+	local err, ack=p:read(1,100)
 	if err ~= rs232.RS232_ERR_NOERROR then
-		return false, err
+		return false, err, '2'
 	end
 	p:write(ack)
 	if ack ~= rsp.ack then
@@ -236,11 +291,39 @@ local function erase(sectorCodes)
 	return true
 end
 
-local function loadfile(filename)
+local function go(address)
+	p:write(cmd.GO)
+	local err, ack=p:read(1,timeout)
+	if err ~= rs232.RS232_ERR_NOERROR then
+		return false, err, '1'
+	end
+	p:write(ack)
+	if ack ~= rsp.ack then
+		return false, ack,'erase 1 rejected'
+	end
+	local d={}
+	d[1]=band(rshift(address,24),0xff)
+	d[2]=band(rshift(address,16),0xff)
+	d[3]=band(rshift(address,8),0xff)
+	d[4]=band(address,0xff)
+	d[5]=checksum(d)
+	p:write(tostr(d))
+	local err, ack=p:read(1,timeout)
+	if err ~= rs232.RS232_ERR_NOERROR then
+		return false, err
+	end
+	p:write(ack)
+	if ack ~= rsp.ack then
+		return false, ack, 'address rejected'
+	end
+	return true
+end
+
+local function loadfile(filename,start_address)
 	if not filename then
 		return false, 'filename not exit'
 	end
-	local address=stb.address
+	local address=start_address
 	local f=io.open(filename,'r')
 	while true do
 		print('blk:'..tohex(address))
@@ -259,7 +342,97 @@ local function loadfile(filename)
 	return true
 end
 
-if true then
+local function loadfile2(filename)
+	local record,msg=tools.s19_to_tbl(filename)
+	if not record then
+		return false,msg
+	end
+	local s=''
+	for _,v in ipairs(record) do
+		if v.head == 'S1' then
+			print(tohex(v.addr),v.data,#v.data)
+			local r, code, msg=write(v.addr,v.data,500)
+			print(r,code,msg)
+			if not r then
+				return false, msg
+			end
+		end
+		if v.head == 'S9' then
+			stb.start_address=v.addr
+		end
+	end
+	return true
+end
+
+local function loadfile3(filename)
+	local record,msg=tools.s19_to_tbl(filename)
+	if not record then
+		return false,msg
+	end
+	local s=record[2].data
+	local addr=record[2].addr
+	local sz=#record-1
+	for i=3,sz do
+		if record[i].head == 'S1' then
+			if record[i].addr == record[i-1].addr+#record[i-1].data then
+				s=s..record[i].data
+				if #s==128 then
+					local r, code, msg=write(addr,s,500)
+					print(r,code,msg)
+					s=''
+					if i+1 <= sz then
+						addr=record[i+1].addr
+					end
+				else
+					if i==sz then
+						local r, code, msg=write(addr,s,500)
+						print(r,code,msg)
+					end
+				end
+			else
+				local r, code, msg=write(addr,s,500)
+				print(r,code,msg)
+				s=record[i].data
+				addr=record[i].addr
+			end
+		end
+	end
+	return true
+end
+
+local function loadfile4(filename)
+	local record,msg=tools.s19_to_tbl(filename)
+	if not record then
+		return false,msg
+	end
+	local i=2
+	local sz=#record-1
+	local s=record[i].data
+	local addr=record.[i].addr
+	i=i+1
+	while i<=sz do
+		if record[i].addr == record[i-1].addr+#record[i-1].data then
+			s=s..record[i].data
+			if #s==128 then
+				print(addr,write(addr,s,500))
+				i=i+1
+				s=record[i].data
+				addr=record[i].addr
+			else
+				if i==sz then
+
+				end
+			end
+		else
+			print(addr,write(addr,s,500))
+			s=record[i].data
+			addr=record[i].addr
+		end
+		i=i+1
+	end
+	return true
+end
+
 do
 	local r, code, msg
 	repeat
@@ -272,40 +445,24 @@ do
 	local r, code, msg=get()
 	print(r,tohex(code),msg)
 	if r then
+		print('-----------------------')
 		print('stm8,version:'..stb.ver)
 		print('supported cmd:')
 		for _,v in ipairs(stb.support_cmd) do
 			print(tohex(v))
 		end
-		-- local r, code, msg=loadfile('./test.s19')
-	 	local r, code, msg=erase({0x03})
-	 	print(r,tohex(code),msg)
-	 -- 	for i=0,0x20 do
-		--  	local r, code, msg=erase({i})
-		-- 	print(r,tohex(code),msg)
-		-- end
+		print('-----------------------')
+		local r,msg=loadfile2('./E_W_ROUTINEs_32K_ver_1.3.s19')
+		print(r,msg)
+		if r then
+			local r,code,msg=read(0x4000)
+			print('read',r,code,msg)
+			if r then
+				-- print(erase())
+				print(loadfile4('./test.s19'))
+			end
+		end
 	end
 end
-else
-	local address=stb.address
-	local d={}
-	d[1]=band(rshift(address,24),0xff)
-	d[2]=band(rshift(address,16),0xff)
-	d[3]=band(rshift(address,8),0xff)
-	d[4]=band(address,0xff)
-	d[5]=checksum(d)
-	p:write(rsp.ack)
-	print(p:write(tostr(d)))
-	print(tohex(tostr(d)))
-	print(p:read(20,100))
-	-- local d={}
-	-- local sectorCodes={0x01,0x02,0x03}
-	-- d[#d+1]=#sectorCodes-1
-	-- for _,v in ipairs(sectorCodes) do
-	-- 	d[#d+1]=v
-	-- end
-	-- d[#d+1]=checksum(sectorCodes,#sectorCodes-1)
-	-- print(p:write(tostr(d)))
-	-- print(tohex(tostr(d)))
-end
+
 assert(p:close() == rs232.RS232_ERR_NOERROR)
