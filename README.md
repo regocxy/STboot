@@ -35,7 +35,7 @@ Summary
 
 2、stm8 bootloader使用的是echo模式，即一应一答，所以，每次对单片机下完指令后要确保把返回值都回复了回去，不然，会出现bootloader工作不正常的情况。
 
-3、向单片机进行写和擦除操作前，一定要先向单片机下载[routine文件](https://github.com/regocxy/STboot/blob/master/res/E_W_ROUTINEs_32K_ver_1.3.s19)，具体操作过程参考[stm8bootloader.pdf](https://github.com/regocxy/STboot/blob/master/doc/stm8bootloader.pdf)。
+3、向单片机进行写和擦除操作前，一定要先向单片机下载[routine文件](https://github.com/regocxy/STboot/blob/master/res/E_W_ROUTINEs_32K_ver_1.3.s19)(注意不同型号的stm8单片机，以及不同版本的bootloader，要选择其相应的routine文件)，具体操作过程参考[stm8bootloader.pdf](https://github.com/regocxy/STboot/blob/master/doc/stm8bootloader.pdf)。
 
 4、stm8进行擦除操作时，除了先下载[routine文件](https://github.com/regocxy/STboot/blob/master/res/E_W_ROUTINEs_32K_ver_1.3.s19)，还要对0x4000地址进行read操作，不然擦除操作将会被拒绝
 
