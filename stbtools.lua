@@ -74,7 +74,7 @@ local function s19_to_tbl(filename)
 end
 
 local function probe()
-	local record,msg=s19_to_tbl('./E_W_ROUTINEs_32K_ver_1.3.s19')
+	local record,msg=s19_to_tbl('./res/E_W_ROUTINEs_32K_ver_1.3.s19')
 	local f=io.open("./log",'w')
 	if record then
 		for _,v in ipairs(record) do

@@ -257,6 +257,9 @@ local function loadfile(filename)
 end 
 
 local function init()
+	if stb.p then
+		stb.p:close()
+	end
 	local e, p = rs232.open(stb.port_name)
 	if e ~= rs232.RS232_ERR_NOERROR then
 		local err=string.format("can't open serial port '%s', error: '%s'\n",stb.port_name, rs232.error_tostring(e))
