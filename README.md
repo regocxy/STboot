@@ -41,6 +41,8 @@ Summary
 
 5、stm8 内置flash，写块大小为128bytes，以128bytes为一块进行下载，将能极大的提高下载速度
 
+6、注意如果你开启了读保护，bootloader将会自动跳过，具体参考[stm8bootloader.pdf](https://github.com/regocxy/STboot/blob/master/doc/stm8bootloader.pdf)。
+
 参考资源
 ------
 
