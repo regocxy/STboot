@@ -246,7 +246,7 @@ local function loadfile(filename)
 	end
 	local l=0
 	local sz=#s
-	local addr = record[2].addr
+	local addr = record[2].addr 
 	while l<sz do
 		local d=s:sub(l+1,l+stb.blksize)
 		print(tohex(addr+l),write(addr+l,d,500))
