@@ -287,12 +287,18 @@ end
 
 do
 	print(init())
+	local count=0
 	local r, code, msg
 	repeat
 		sleep(500)
+		count=count+1
+		if count > 10 then
+			print(close())
+			return
+		end
 		r, code, msg=synch()
 		print('synch',r,tohex(code),msg)
-	until ((code == rsp.ack) or (code == rsp.nack))
+	until (code == rsp.ack) or (code == rsp.nack)
 	print('synch,success')
 
 	local r, code, msg=get()
