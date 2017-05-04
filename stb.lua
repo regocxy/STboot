@@ -90,15 +90,15 @@ local function comm(s,timeout,wait)
 end
 
 local function synch(timeout)
-	local r,code,msg=comm(cmd.SYN)
+	local r,code,msg=comm(cmd.SYN,timeout)
 	if not r then
 		return false, code, msg
 	end
-	return true, ack
+	return true, code
 end
 
 local function get(timeout)
-	local r,code,msg=comm(cmd.GET)
+	local r,code,msg=comm(cmd.GET,timeout)
 	if not r then
 		return false, code, msg
 	end
@@ -128,7 +128,7 @@ local function get(timeout)
 end
 
 local function read(address,n,timeout)
-	local r,code,msg=comm(cmd.READ)
+	local r,code,msg=comm(cmd.READ,timeout)
 	if not r then
 		return false, code, msg
 	end
@@ -138,7 +138,7 @@ local function read(address,n,timeout)
 	d[3]=band(rshift(address,8),0xff)
 	d[4]=band(address,0xff)
 	d[5]=checksum(d)
-	local r,code,msg=comm(tostr(d))
+	local r,code,msg=comm(tostr(d),timeout)
 	if not r then
 		return false, code, msg
 	end
@@ -150,7 +150,7 @@ local function read(address,n,timeout)
 		d[1]=0x01
 		d[2]=0xfe
 	end
-	local r,code,msg=comm(tostr(d))
+	local r,code,msg=comm(tostr(d),timeout)
 	if not r then
 		return false, code, msg
 	end
@@ -176,7 +176,7 @@ local function write(address,data,timeout)
 	d[3]=band(rshift(address,8),0xff)
 	d[4]=band(address,0xff)
 	d[5]=checksum(d)
-	r,code,msg=comm(tostr(d))
+	r,code,msg=comm(tostr(d),timeout)
 	if not r then
 		return false,code,msg
 	end
@@ -213,7 +213,7 @@ local function erase(sectorCodes,timeout)
 end
 
 local function go(address,timeout)
-	local r,code,msg=comm(cmd.GO)
+	local r,code,msg=comm(cmd.GO,timeout)
 	if not r then
 		return false,code,msg
 	end
@@ -223,7 +223,7 @@ local function go(address,timeout)
 	d[3]=band(rshift(address,8),0xff)
 	d[4]=band(address,0xff)
 	d[5]=checksum(d)
-	r,code,msg=comm(tostr(d))
+	r,code,msg=comm(tostr(d),timeout)
 	if not r then
 		return false,code,msg
 	end
