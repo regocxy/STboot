@@ -14,7 +14,7 @@ local function checksum(s)
 	return 0xff-band(cks,0xff)
 end
 
-local function hex_to_binary(hex)
+local function hex_to_bin(hex)
   return hex:gsub('..', function(hexval)
     return string.char(tonumber(hexval, 16))
   end)
@@ -27,6 +27,18 @@ local function tohex(s)
 		end)
 	elseif type(s) == 'number' then
 		return string.format('%x',s)
+	end
+end
+
+local function tostr(tbl)
+	if type(tbl) == 'table' then
+		local s=''
+		for _,v in ipairs(tbl) do
+			s=s..string.char(v)
+		end
+		return s
+	else
+		return nil, 'input invalid'
 	end
 end
 
@@ -47,7 +59,7 @@ local function s19_to_tbl(filename)
 			head=line:sub(1,2),
 			len=tonumber(line:sub(3,4),16)-3,
 			addr=tonumber(line:sub(5,8),16),
-			data=hex_to_binary(line:sub(9,-3))
+			data=hex_to_bin(line:sub(9,-3))
 		}
 		local cks=tonumber(line:sub(-2,-1),16)
 		if checksum(line:sub(3,-3)) ~= cks then
@@ -70,12 +82,13 @@ local function probe()
 			end
 		end
 	else
-		print(rocord,msg)
+		print(record,msg)
 	end
 	f:close()
 end
 
 _M.s19_to_tbl=s19_to_tbl
 _M.tohex=tohex
+_M.tostr=tostr
 return _M
 

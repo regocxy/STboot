@@ -3,26 +3,29 @@ package.path = '/workspace/zdc/lua/zsvc/?.lua;/workspace/zdc/lua/zai/?.lua;/work
 package.cpath = '/workspace/zdc/lib/mac64/?.so;'..package.cpath
 
 local rs232 = require("luars232")
-local tools = require('tool')
+local tools = require('stbtools')
 local bit = require("bit")
+
+local s19_to_tbl,tohex,tostr= tools.s19_to_tbl,tools.tohex,tools.tostr
 local band,rshift,bxor = bit.band,bit.rshift,bit.bxor
--- Linux
--- port_name = "/dev/ttyS0"
 
--- (Open)BSD
-port_name = "/dev/tty.usbserial-A50285BI"
-
--- Windows
--- port_name = "COM1"
+local stb=
+{
+	support_cmd={},
+	blksize=128,--for stm8, stm32 is 256
+ 	start_address=0x8000,
+ 	timeout=100,
+ 	port_name='/dev/tty.usbserial-A50285BI'
+}
 
 local out = io.stderr
 
 -- open port
-local e, p = rs232.open(port_name)
+local e, p = rs232.open(stb.port_name)
 if e ~= rs232.RS232_ERR_NOERROR then
 	-- handle error
 	out:write(string.format("can't open serial port '%s', error: '%s'\n",
-			port_name, rs232.error_tostring(e)))
+			stb.port_name, rs232.error_tostring(e)))
 	return
 end
 
@@ -35,15 +38,6 @@ assert(p:set_flow_control(rs232.RS232_FLOW_OFF)  == rs232.RS232_ERR_NOERROR)
 
 out:write(string.format("OK, port open with values '%s'\n", tostring(p)))
 print(p:read(1,100))
-
-local stb=
-{
-	support_cmd={},
-	blksize=128,--for stm8, stm32 is 256
- 	address=0xa0,
- 	timeout=100
-	-- address=0x008000
-}
 
 local cmd=
 {
@@ -62,24 +56,6 @@ local rsp=
 	nack=string.char(0x1f),
 	busy=string.char(0xaa),
 }
-
-local function tohex(s)
-	if type(s) == 'string' then
-		return string.gsub(s,'.',function(c)
-			return string.format('%02x',c:byte())
-		end)
-	elseif type(s) == 'number' then
-		return string.format('%02x',s)
-	end
-end
-
-local function tostr(tbl)
-	local s=''
-	for _,v in ipairs(tbl) do
-		s=s..string.char(v)
-	end
-	return s
-end
 
 local function checksum(d,init)
 	local xor=init or 0x00
@@ -319,119 +295,32 @@ local function go(address)
 	return true
 end
 
-local function loadfile(filename,start_address)
-	if not filename then
-		return false, 'filename not exit'
-	end
-	local address=start_address
-	local f=io.open(filename,'r')
-	while true do
-		print('blk:'..tohex(address))
-		local blk=f:read(stb.blksize)
-		if not blk then
-			break
-		end
-		local r,code,msg = write(address,blk,blk:len())
-		if not r then
-			f:close()
-			return false,code,msg
-		end
-		address=address+blk:len()
-	end
-	f:close()
-	return true
-end
-
-local function loadfile2(filename)
-	local record,msg=tools.s19_to_tbl(filename)
+local function loadfile(filename)
+	local record,msg=s19_to_tbl(filename)
 	if not record then
 		return false,msg
 	end
+	table.sort(record,function(a,b)
+		return a.addr < b.addr
+	end)
 	local s=''
-	for _,v in ipairs(record) do
+	for k,v in pairs(record) do
+		print(k,#v.data,tohex(v.addr))
 		if v.head == 'S1' then
-			print(tohex(v.addr),v.data,#v.data)
-			local r, code, msg=write(v.addr,v.data,500)
-			print(r,code,msg)
-			if not r then
-				return false, msg
-			end
-		end
-		if v.head == 'S9' then
-			stb.start_address=v.addr
+			s=s..v.data
 		end
 	end
+	local l=0
+	local sz=#s
+	local addr = record[2].addr
+	while l<sz do
+		local d=s:sub(l+1,l+128)
+		print(tohex(addr+l),write(addr+l,d,500))
+		l=l+#d
+	end
+	print(tohex(addr+l))
 	return true
-end
-
-local function loadfile3(filename)
-	local record,msg=tools.s19_to_tbl(filename)
-	if not record then
-		return false,msg
-	end
-	local s=record[2].data
-	local addr=record[2].addr
-	local sz=#record-1
-	for i=3,sz do
-		if record[i].head == 'S1' then
-			if record[i].addr == record[i-1].addr+#record[i-1].data then
-				s=s..record[i].data
-				if #s==128 then
-					local r, code, msg=write(addr,s,500)
-					print(r,code,msg)
-					s=''
-					if i+1 <= sz then
-						addr=record[i+1].addr
-					end
-				else
-					if i==sz then
-						local r, code, msg=write(addr,s,500)
-						print(r,code,msg)
-					end
-				end
-			else
-				local r, code, msg=write(addr,s,500)
-				print(r,code,msg)
-				s=record[i].data
-				addr=record[i].addr
-			end
-		end
-	end
-	return true
-end
-
-local function loadfile4(filename)
-	local record,msg=tools.s19_to_tbl(filename)
-	if not record then
-		return false,msg
-	end
-	local i=2
-	local sz=#record-1
-	local s=record[i].data
-	local addr=record.[i].addr
-	i=i+1
-	while i<=sz do
-		if record[i].addr == record[i-1].addr+#record[i-1].data then
-			s=s..record[i].data
-			if #s==128 then
-				print(addr,write(addr,s,500))
-				i=i+1
-				s=record[i].data
-				addr=record[i].addr
-			else
-				if i==sz then
-
-				end
-			end
-		else
-			print(addr,write(addr,s,500))
-			s=record[i].data
-			addr=record[i].addr
-		end
-		i=i+1
-	end
-	return true
-end
+end 
 
 do
 	local r, code, msg
@@ -452,14 +341,15 @@ do
 			print(tohex(v))
 		end
 		print('-----------------------')
-		local r,msg=loadfile2('./E_W_ROUTINEs_32K_ver_1.3.s19')
+		local r,msg=loadfile('./res/E_W_ROUTINEs_32K_ver_1.3.s19')
 		print(r,msg)
 		if r then
 			local r,code,msg=read(0x4000)
 			print('read',r,code,msg)
 			if r then
 				-- print(erase())
-				print(loadfile4('./test.s19'))
+				print(loadfile('./res/test.s19'))
+				go(stb.start_address)
 			end
 		end
 	end
