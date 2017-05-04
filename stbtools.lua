@@ -27,6 +27,8 @@ local function tohex(s)
 		end)
 	elseif type(s) == 'number' then
 		return string.format('%x',s)
+	else
+		return nil,'params invalid'
 	end
 end
 

@@ -12,32 +12,14 @@ local band,rshift,bxor = bit.band,bit.rshift,bit.bxor
 local stb=
 {
 	support_cmd={},
+	timeout=100,
 	blksize=128,--for stm8, stm32 is 256
- 	start_address=0x8000,
- 	timeout=100,
- 	port_name='/dev/tty.usbserial-A50285BI'
+ 	start_address=0x8000,--for stm8
+ 	path_routine='./res/E_W_ROUTINEs_32K_ver_1.3.s19',
+ 	path_firmware='./res/test.s19',
+ 	port_name='/dev/tty.usbserial-A50285BI',
+ 	erase_en=false
 }
-
-local out = io.stderr
-
--- open port
-local e, p = rs232.open(stb.port_name)
-if e ~= rs232.RS232_ERR_NOERROR then
-	-- handle error
-	out:write(string.format("can't open serial port '%s', error: '%s'\n",
-			stb.port_name, rs232.error_tostring(e)))
-	return
-end
-
--- set port settings
-assert(p:set_baud_rate(rs232.RS232_BAUD_115200) == rs232.RS232_ERR_NOERROR)
-assert(p:set_data_bits(rs232.RS232_DATA_8) == rs232.RS232_ERR_NOERROR)
-assert(p:set_parity(rs232.RS232_PARITY_NONE) == rs232.RS232_ERR_NOERROR)
-assert(p:set_stop_bits(rs232.RS232_STOP_1) == rs232.RS232_ERR_NOERROR)
-assert(p:set_flow_control(rs232.RS232_FLOW_OFF)  == rs232.RS232_ERR_NOERROR)
-
-out:write(string.format("OK, port open with values '%s'\n", tostring(p)))
-print(p:read(1,100))
 
 local cmd=
 {
@@ -74,55 +56,68 @@ local function checksum(d,init)
 end
 
 local function sleep(t)
+	t=t/1000
 	os.execute('sleep '..t)
 end
 
-local timeout=100
-local function synch()
-	p:write(cmd.SYN)
-	local err, ack=p:read(1,timeout)
-	if err ~= rs232.RS232_ERR_NOERROR then
-		return false, err
+local function comm(s,timeout,wait)
+	local timeout=timeout or stb.timeout
+	if not stb.p then
+		return false, nil, 'uart is not open'
 	end
-	p:write(ack)
-	if ack ~= rsp.ack then
-		return false, ack,'synch rejected'
+	if s then
+		stb.p:write(s)
+		if wait then
+			sleep(wait)
+		end
+		local err, ack=stb.p:read(1,timeout)
+		if err ~= rs232.RS232_ERR_NOERROR then
+			return false, err, 'rs232'
+		end
+		stb.p:write(ack)
+		if ack ~= rsp.ack then
+			return false, ack, 'ops rejected'
+		end
+		return true, ack
+	else
+		local err, msg=stb.p:read(1,timeout)
+		if err ~= rs232.RS232_ERR_NOERROR then
+			return false, err, 'rs232'
+		end
+		stb.p:write(msg)
+		return true, msg
+	end
+end
+
+local function synch(timeout)
+	local r,code,msg=comm(cmd.SYN)
+	if not r then
+		return false, code, msg
 	end
 	return true, ack
 end
 
-local function get()
-	p:write(cmd.GET)
-	local err, ack=p:read(1,timeout)
-	if err ~= rs232.RS232_ERR_NOERROR then
-		return false, err, '1'
+local function get(timeout)
+	local r,code,msg=comm(cmd.GET)
+	if not r then
+		return false, code, msg
 	end
-	p:write(ack)
-	if ack ~= rsp.ack then
-		return false, ack,'get rejected'
+	r,code,msg=comm()
+	if not r then
+		return false, code, msg
 	end
-	local err,sz=p:read(1,timeout)
-	if err ~= rs232.RS232_ERR_NOERROR then
-		return false, err, '2'
-	end
-	p:write(sz)
-	sz=string.byte(sz)
+	local sz=string.byte(code)
 	local d={}
 	for i=1,sz+1 do
-		err,msg=p:read(1,timeout)
-		if err ~= rs232.RS232_ERR_NOERROR then
-			return false, err
+		r,code,msg=comm()
+		if not r then
+			return false, code, msg
 		end
-		d[#d+1]=msg
-		p:write(msg)
+		d[#d+1]=code
 	end
-	local err, ack=p:read(1,timeout)
-	if err ~= rs232.RS232_ERR_NOERROR then
-		return false, err
-	end
-	p:write(ack)
-	if ack ~= rsp.ack then
-		return false, ack,'ops rejected'
+	r,code,msg=comm()
+	if not r then
+		return false, code, msg
 	end
 	local v=string.byte(d[1])
 	stb.ver=band(rshift(v,4),0xff)..'.'..band(v,0x0f)
@@ -132,15 +127,10 @@ local function get()
 	return true
 end
 
-local function read(address,n)
-	p:write(cmd.READ)
-	local err, ack=p:read(1,timeout)
-	if err ~= rs232.RS232_ERR_NOERROR then
-		return false, err, '1'
-	end
-	p:write(ack)
-	if ack ~= rsp.ack then
-		return false, ack, 'write rejected'
+local function read(address,n,timeout)
+	local r,code,msg=comm(cmd.READ)
+	if not r then
+		return false, code, msg
 	end
 	local d={}
 	d[1]=band(rshift(address,24),0xff)
@@ -148,14 +138,9 @@ local function read(address,n)
 	d[3]=band(rshift(address,8),0xff)
 	d[4]=band(address,0xff)
 	d[5]=checksum(d)
-	p:write(tostr(d))
-	local err, ack=p:read(1,timeout)
-	if err ~= rs232.RS232_ERR_NOERROR then
-		return false, err, '2'
-	end
-	p:write(ack)
-	if ack ~= rsp.ack then
-		return false, ack, 'data rejected'
+	local r,code,msg=comm(tostr(d))
+	if not r then
+		return false, code, msg
 	end
 	d={}
 	if n and n<=0xff then
@@ -165,43 +150,25 @@ local function read(address,n)
 		d[1]=0x01
 		d[2]=0xfe
 	end
-	p:write(tostr(d))
-	local err, ack=p:read(1,timeout)
-	if err ~= rs232.RS232_ERR_NOERROR then
-		return false, err, '3'
+	local r,code,msg=comm(tostr(d))
+	if not r then
+		return false, code, msg
 	end
-	p:write(ack)
-	if ack ~= rsp.ack then
-		return false, ack, 'data rejected'
+	local r,code,msg=comm()
+	if not r then
+		return false, code, msg
 	end
-	local err, v=p:read(1,timeout)
-	if err ~= rs232.RS232_ERR_NOERROR then
-		return false, err, '4'
+	local r,code,msg=comm()
+	if not r then
+		return false, code, msg
 	end
-	p:write(v)
-	local err, v=p:read(1,timeout)
-	if err ~= rs232.RS232_ERR_NOERROR then
-		return false, err, '5'
-	end
-	p:write(v)
-	return true, v
+	return true, code
 end
 
-local function comm(s)
-	p:write(s)
-	-- print(tohex(s))
-end
-
-local function write(address,data,ex)
-	local timeout=ex or stb.timeout
-	comm(cmd.WRITE)
-	local err, ack=p:read(1,timeout)
-	if err ~= rs232.RS232_ERR_NOERROR then
-		return false, err, '1'
-	end
-	p:write(ack)
-	if ack ~= rsp.ack then
-		return false, ack, 'write rejected'
+local function write(address,data,timeout)
+	local r,code,msg=comm(cmd.WRITE,timeout)
+	if not r then
+		return false,code,msg
 	end
 	local d={}
 	d[1]=band(rshift(address,24),0xff)
@@ -209,38 +176,23 @@ local function write(address,data,ex)
 	d[3]=band(rshift(address,8),0xff)
 	d[4]=band(address,0xff)
 	d[5]=checksum(d)
-	comm(tostr(d))
-	local err, ack=p:read(1,timeout)
-	if err ~= rs232.RS232_ERR_NOERROR then
-		return false, err, '2'
+	r,code,msg=comm(tostr(d))
+	if not r then
+		return false,code,msg
 	end
-	comm(ack)
-	if ack ~= rsp.ack then
-		return false, ack, 'address rejected'
-	end
-	comm(string.char(#data-1))
-	comm(data)
-	comm(string.char(checksum(data,#data-1)))
-	local err, ack=p:read(1,timeout)
-	if err ~= rs232.RS232_ERR_NOERROR then
-		return false, err, '3'
-	end
-	comm(ack)
-	if ack ~= rsp.ack then
-		return false, ack, 'data rejected'
+	local s=string.char(#data-1)
+	s=s..data..string.char(checksum(data,#data-1))
+	r,code,msg=comm(s,timeout)
+	if not r then
+		return false,code,msg
 	end
 	return true
 end
 
-local function erase(sectorCodes)
-	p:write(cmd.ERASE)
-	local err, ack=p:read(1,timeout)
-	if err ~= rs232.RS232_ERR_NOERROR then
-		return false, err, '1'
-	end
-	p:write(ack)
-	if ack ~= rsp.ack then
-		return false, ack,'erase 1 rejected'
+local function erase(sectorCodes,timeout)
+	local r,code,msg=comm(cmd.ERASE,timeout)
+	if not r then
+		return false,code,msg
 	end
 	local d={}
 	if sectorCodes then
@@ -253,29 +205,17 @@ local function erase(sectorCodes)
 		d[#d+1]=0xff
 		d[#d+1]=0x00
 	end
-	p:write(tostr(d))
-	print(tohex(tostr(d)))
-	sleep(1)
-	local err, ack=p:read(1,100)
-	if err ~= rs232.RS232_ERR_NOERROR then
-		return false, err, '2'
-	end
-	p:write(ack)
-	if ack ~= rsp.ack then
-		return false, ack,'erase 2 rejected'
+	local r,code,msg=comm(tostr(d),100,1000)
+	if not r then
+		return false,code,msg
 	end
 	return true
 end
 
-local function go(address)
-	p:write(cmd.GO)
-	local err, ack=p:read(1,timeout)
-	if err ~= rs232.RS232_ERR_NOERROR then
-		return false, err, '1'
-	end
-	p:write(ack)
-	if ack ~= rsp.ack then
-		return false, ack,'erase 1 rejected'
+local function go(address,timeout)
+	local r,code,msg=comm(cmd.GO)
+	if not r then
+		return false,code,msg
 	end
 	local d={}
 	d[1]=band(rshift(address,24),0xff)
@@ -283,14 +223,9 @@ local function go(address)
 	d[3]=band(rshift(address,8),0xff)
 	d[4]=band(address,0xff)
 	d[5]=checksum(d)
-	p:write(tostr(d))
-	local err, ack=p:read(1,timeout)
-	if err ~= rs232.RS232_ERR_NOERROR then
-		return false, err
-	end
-	p:write(ack)
-	if ack ~= rsp.ack then
-		return false, ack, 'address rejected'
+	r,code,msg=comm(tostr(d))
+	if not r then
+		return false,code,msg
 	end
 	return true
 end
@@ -305,7 +240,6 @@ local function loadfile(filename)
 	end)
 	local s=''
 	for k,v in pairs(record) do
-		print(k,#v.data,tohex(v.addr))
 		if v.head == 'S1' then
 			s=s..v.data
 		end
@@ -314,7 +248,7 @@ local function loadfile(filename)
 	local sz=#s
 	local addr = record[2].addr
 	while l<sz do
-		local d=s:sub(l+1,l+128)
+		local d=s:sub(l+1,l+stb.blksize)
 		print(tohex(addr+l),write(addr+l,d,500))
 		l=l+#d
 	end
@@ -322,10 +256,32 @@ local function loadfile(filename)
 	return true
 end 
 
+local function init()
+	local e, p = rs232.open(stb.port_name)
+	if e ~= rs232.RS232_ERR_NOERROR then
+		local err=string.format("can't open serial port '%s', error: '%s'\n",stb.port_name, rs232.error_tostring(e))
+		return false,err
+	end
+	assert(p:set_baud_rate(rs232.RS232_BAUD_115200) == rs232.RS232_ERR_NOERROR)
+	assert(p:set_data_bits(rs232.RS232_DATA_8) == rs232.RS232_ERR_NOERROR)
+	assert(p:set_parity(rs232.RS232_PARITY_NONE) == rs232.RS232_ERR_NOERROR)
+	assert(p:set_stop_bits(rs232.RS232_STOP_1) == rs232.RS232_ERR_NOERROR)
+	assert(p:set_flow_control(rs232.RS232_FLOW_OFF)  == rs232.RS232_ERR_NOERROR)
+	print(p:read(1,stb.timeout))
+	stb.p=p
+	return true,string.format("OK, port open with values '%s'\n", tostring(p))
+end
+
+local function close()
+	assert(stb.p:close() == rs232.RS232_ERR_NOERROR)
+	return true,'close'
+end
+
 do
+	print(init())
 	local r, code, msg
 	repeat
-		sleep(1)
+		sleep(500)
 		r, code, msg=synch()
 		print('synch',r,tohex(code),msg)
 	until ((code == rsp.ack) or (code == rsp.nack))
@@ -341,18 +297,19 @@ do
 			print(tohex(v))
 		end
 		print('-----------------------')
-		local r,msg=loadfile('./res/E_W_ROUTINEs_32K_ver_1.3.s19')
+		local r,msg=loadfile(stb.path_routine)
 		print(r,msg)
 		if r then
 			local r,code,msg=read(0x4000)
 			print('read',r,code,msg)
 			if r then
-				-- print(erase())
-				print(loadfile('./res/test.s19'))
-				go(stb.start_address)
+				if stb.erase_en then
+					print('erase',erase())
+				end
+				print('loadfile',loadfile(stb.path_firmware))
+				print('go',go(stb.start_address))
 			end
 		end
 	end
+	print(close())
 end
-
-assert(p:close() == rs232.RS232_ERR_NOERROR)
