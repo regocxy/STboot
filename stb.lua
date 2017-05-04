@@ -233,7 +233,7 @@ end
 local function loadfile(filename)
 	local record,msg=s19_to_tbl(filename)
 	if not record then
-		return false,msg
+		return false, nil, msg
 	end
 	table.sort(record,function(a,b)
 		return a.addr < b.addr
@@ -247,9 +247,14 @@ local function loadfile(filename)
 	local l=0
 	local sz=#s
 	local addr = record[2].addr 
+	local r,code,msg
 	while l<sz do
 		local d=s:sub(l+1,l+stb.blksize)
-		print(tohex(addr+l),write(addr+l,d,500))
+		r,code,msg=write(addr+l,d,500)
+		if not r then
+			return r, code, smg
+		end
+		print(tohex(addr+l))
 		l=l+#d
 	end
 	print(tohex(addr+l))
